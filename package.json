@@ -1,0 +1,26 @@
+{
+  "name": "series-and-movies-for-my-love",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "build": "vite build",
+    "dev": "vite build && wrangler dev",
+    "db:local": "wrangler d1 execute smfml-db --local --file=schema.sql",
+    "db:remote": "wrangler d1 execute smfml-db --remote --file=schema.sql",
+    "deploy": "vite build && wrangler deploy",
+    "convertir": "node tools/convertir.mjs",
+    "crear-usuario": "node tools/crear-usuario.mjs"
+  },
+  "dependencies": {
+    "hls.js": "^1.5.17",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.28.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.4",
+    "vite": "^5.4.11",
+    "wrangler": "^4.0.0"
+  }
+}
