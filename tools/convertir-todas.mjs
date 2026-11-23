@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Convierte TODAS las películas de una carpeta a HLS (usa convertir.mjs para cada una).
-// Uso:  node tools/convertir-todas.mjs "C:\PELICULAS" [--rapido] [--audio spa|eng]
+// Uso:  node tools/convertir-todas.mjs "C:\PELICULAS" [--gpu auto] [--rapido] [--audio spa|eng]
 // - Salida en <carpeta>\salida\<slug>\
 // - Si una ya está convertida, la salta (puedes cerrar y volver a abrir: continúa).
 // - Al final genera SUBIR_A_R2.bat y CATALOGO.txt (datos para el Panel).
@@ -14,7 +14,7 @@ const args = process.argv.slice(2);
 const passthrough = [];
 for (let i = 0; i < args.length; i++) {
   if (args[i] === '--rapido') passthrough.push('--rapido');
-  else if (args[i] === '--audio' || args[i] === '--crf') passthrough.push(args[i], args[++i]);
+  else if (args[i] === '--audio' || args[i] === '--crf' || args[i] === '--gpu') passthrough.push(args[i], args[++i]);
 }
 const folder = path.resolve(args.find((a) => !a.startsWith('--') && !passthrough.includes(a)) || path.join(here, '..'));
 const outRoot = path.join(folder, 'salida');

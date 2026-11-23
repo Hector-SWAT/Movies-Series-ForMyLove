@@ -23,11 +23,13 @@ if errorlevel 1 (
 )
 
 echo Elige el modo:
-echo   1 = Maxima calidad (lento, recomendado)
-echo   2 = Rapido (para probar)
+echo   1 = Tarjeta de video / GPU  (RECOMENDADO: 10-20x mas rapido, muy buena calidad)
+echo   2 = Procesador, rapido      (si no tienes GPU compatible)
+echo   3 = Procesador, maxima calidad (MUY lento: puede tardar mas de un dia por pelicula)
 set /p MODO="Opcion [1]: "
-set EXTRA=
+set EXTRA=--gpu auto
 if "%MODO%"=="2" set EXTRA=--rapido
+if "%MODO%"=="3" set EXTRA=
 
 rem Evita que Windows se suspenda mientras convierte
 powercfg /change standby-timeout-ac 0 >nul 2>nul

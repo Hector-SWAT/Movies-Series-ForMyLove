@@ -112,7 +112,7 @@ node tools/convertir.mjs "D:\Peliculas\Titanic (1997).mkv" titanic
 - Genera `salida\titanic\` con `master.m3u8`, una carpeta por calidad, `poster.jpg` e `info.json`.
 - **Calidad:** la calidad más alta usa la resolución original (nunca se agranda) con CRF 18, que a simple vista no se distingue del original. Si la película es 4K, se genera también la versión 4K.
 - El audio 5.1 se convierte a estéreo AAC, el formato que reproducen todos los navegadores.
-- Tiempo aproximado: en preset `slow`, una película de 2 h tarda de 1 a 3 h según tu PC. Para pruebas usa `--rapido` (mucho más rápido, con archivos un poco más grandes).
+- **Velocidad:** usa `--gpu auto` para que lo haga la tarjeta de video (NVIDIA NVENC, Intel Quick Sync o AMD AMF): una película de 2 h tarda de 20 a 60 min. Si no hay GPU compatible, pasa a `--rapido` automáticamente. Sin opciones, usa el procesador con preset `slow` (la mejor compresión, pero en PCs modestas puede tardar más de un día por película).
 - Opciones: `--crf 16` (más calidad, más peso) o `--salida E:\hls` (otra carpeta).
 
 **Convertir todas las de una carpeta:** copia `tools\convertir.mjs`, `tools\convertir-todas.mjs` y `tools\CONVERTIR_TODAS.bat` a una subcarpeta `_conversor` dentro de tu carpeta de películas (p. ej. `C:\PELICULAS\_conversor`) y da doble clic en `CONVERTIR_TODAS.bat`. Instala Node/FFmpeg si faltan, convierte todo a `C:\PELICULAS\salida`, salta las ya convertidas y genera `SUBIR_A_R2.bat` y `CATALOGO.txt`. Por defecto elige la pista de audio en español (`--audio eng` para inglés).

@@ -2,7 +2,7 @@
 // Convierte una película a HLS adaptativo (varias calidades) + póster, listo para subir a R2.
 //
 // Uso:
-//   node tools/convertir.mjs "<archivo de video>" <slug> [--salida carpeta] [--rapido] [--crf 18] [--audio spa|eng]
+//   node tools/convertir.mjs "<archivo de video>" <slug> [--salida carpeta] [--rapido] [--crf 18] [--audio spa|eng] [--gpu auto]
 //
 // Ejemplo (Windows):
 //   node tools/convertir.mjs "C:\Peliculas\Titanic (1997).mkv" titanic
@@ -36,6 +36,7 @@ const outRoot = opt('--salida', 'salida');
 const audioLang = (opt('--audio', 'spa') || 'spa').toLowerCase();
 const crfTop = Number(opt('--crf', '18'));
 const fast = flag('--rapido');
+const gpuArg = opt('--gpu', null); // auto | nvenc | qsv | amf
 const [input, rawSlug] = args;
 
 if (!input || !rawSlug) {
@@ -54,6 +55,20 @@ for (const bin of ['ffmpeg', 'ffprobe']) {
     process.exit(1);
   }
 }
+
+// --- 0. Codificador por GPU (NVIDIA = nvenc, Intel = qsv, AMD = amf): 10-20x más rápido
+function gpuWorks(enc) {
+  const r = spawnSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'testsrc2=size=1280x720:rate=24',
+    '-t', '1', '-c:v', `h264_${enc}`, '-f', 'null', '-'], { encoding: 'utf8' });
+  return r.status === 0;
+}
+let gpu = null;
+if (gpuArg) {
+  const order = gpuArg === 'auto' ? ['nvenc', 'qsv', 'amf'] : [gpuArg];
+  gpu = order.find(gpuWorks) || null;
+  if (!gpu) console.log('⚠ No se encontró una GPU compatible (NVIDIA/Intel/AMD). Se usará el procesador en modo rápido.');
+}
+const cpuFast = fast || (gpuArg && !gpu);
 
 // --- 1. Analizar el archivo original
 const probe = spawnSync('ffprobe', ['-v', 'error', '-print_format', 'json', '-show_streams', '-show_format', input], { encoding: 'utf8' });
@@ -105,27 +120,39 @@ fs.mkdirSync(outDir, { recursive: true });
 
 console.log(`\n🎬 ${path.basename(input)}`);
 console.log(`   Original: ${srcW}x${srcH}, ${Math.floor(duration / 60)} min, audio: ${aStream ? `pista ${aIndex + 1}/${audios.length} [${langOf(aStream) || '?'}${aStream.tags?.title ? ' · ' + aStream.tags.title : ''}] ${aStream.codec_name} ${aStream.channels || '?'}ch` : 'sin audio'}`);
-console.log(`   Calidades: ${renditions.map(([h]) => h + 'p').join(', ')}  (${fast ? 'modo rápido' : 'preset slow, máxima calidad'})`);
+const modeText = gpu ? `GPU ${gpu.toUpperCase()}` : cpuFast ? 'procesador, modo rápido' : 'procesador, preset slow, máxima calidad';
+console.log(`   Calidades: ${renditions.map(([h]) => h + 'p').join(', ')}  (${modeText})`);
 console.log(`   Salida: ${outDir}\n`);
 
 // --- 3. Comando ffmpeg con todas las calidades en una sola pasada
 const n = renditions.length;
 const split = `[0:v:0]split=${n}${renditions.map((_, i) => `[v${i}]`).join('')}`;
-const scales = renditions.map(([h], i) => `[v${i}]scale=-2:${h}:flags=lanczos,format=yuv420p[v${i}o]`).join(';');
+const scaleFlags = gpu || cpuFast ? 'bicubic' : 'lanczos';
+const pixFmt = gpu === 'qsv' ? 'nv12' : 'yuv420p';
+const scales = renditions.map(([h], i) => `[v${i}]scale=-2:${h}:flags=${scaleFlags},format=${pixFmt}[v${i}o]`).join(';');
 
 const ff = ['-hide_banner', '-y', '-i', input, '-filter_complex', `${split};${scales}`];
 renditions.forEach(([h, maxrate, crf], i) => {
-  ff.push('-map', `[v${i}o]`,
-    `-c:v:${i}`, 'libx264', `-crf:v:${i}`, String(crf),
-    `-maxrate:v:${i}`, `${maxrate}k`, `-bufsize:v:${i}`, `${maxrate * 2}k`,
-    `-profile:v:${i}`, 'high');
+  const q = String(crf + 2); // escala de calidad equivalente aproximada para GPU
+  ff.push('-map', `[v${i}o]`);
+  if (gpu === 'nvenc') {
+    ff.push(`-c:v:${i}`, 'h264_nvenc', `-preset:v:${i}`, 'p5', `-tune:v:${i}`, 'hq', `-rc:v:${i}`, 'vbr',
+      `-cq:v:${i}`, q, `-b:v:${i}`, '0', `-spatial_aq:v:${i}`, '1', `-forced-idr:v:${i}`, '1');
+  } else if (gpu === 'qsv') {
+    ff.push(`-c:v:${i}`, 'h264_qsv', `-preset:v:${i}`, 'medium', `-global_quality:v:${i}`, q, `-look_ahead:v:${i}`, '0');
+  } else if (gpu === 'amf') {
+    ff.push(`-c:v:${i}`, 'h264_amf', `-quality:v:${i}`, 'quality', `-rc:v:${i}`, 'qvbr', `-qvbr_quality_level:v:${i}`, String(Math.max(20, 46 - crf)));
+  } else {
+    ff.push(`-c:v:${i}`, 'libx264', `-crf:v:${i}`, String(crf));
+  }
+  ff.push(`-maxrate:v:${i}`, `${maxrate}k`, `-bufsize:v:${i}`, `${maxrate * 2}k`, `-profile:v:${i}`, 'high');
 });
 if (aStream) {
   renditions.forEach(() => ff.push('-map', `0:a:${aIndex}`));
   ff.push('-c:a', 'aac', '-b:a', '192k', '-ac', '2', '-ar', '48000');
 }
 ff.push(
-  '-preset', fast ? 'veryfast' : 'slow',
+  ...(gpu ? [] : ['-preset', cpuFast ? 'veryfast' : 'slow']),
   '-force_key_frames', 'expr:gte(t,n_forced*6)', '-sc_threshold', '0',
   '-sn', '-dn',
   '-f', 'hls', '-hls_time', '6', '-hls_playlist_type', 'vod', '-hls_flags', 'independent_segments',
