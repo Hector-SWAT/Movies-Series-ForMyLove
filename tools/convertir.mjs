@@ -2,7 +2,7 @@
 // Convierte una película a HLS adaptativo (varias calidades) + póster, listo para subir a R2.
 //
 // Uso:
-//   node tools/convertir.mjs "<archivo de video>" <slug> [--salida carpeta] [--rapido] [--crf 18]
+//   node tools/convertir.mjs "<archivo de video>" <slug> [--salida carpeta] [--rapido] [--crf 18] [--audio spa|eng]
 //
 // Ejemplo (Windows):
 //   node tools/convertir.mjs "C:\Peliculas\Titanic (1997).mkv" titanic
@@ -33,6 +33,7 @@ const flag = (name) => {
 };
 
 const outRoot = opt('--salida', 'salida');
+const audioLang = (opt('--audio', 'spa') || 'spa').toLowerCase();
 const crfTop = Number(opt('--crf', '18'));
 const fast = flag('--rapido');
 const [input, rawSlug] = args;
@@ -62,7 +63,17 @@ if (probe.status !== 0) {
 }
 const info = JSON.parse(probe.stdout);
 const vStream = info.streams.find((s) => s.codec_type === 'video' && s.disposition?.attached_pic !== 1);
-const aStream = info.streams.find((s) => s.codec_type === 'audio');
+// Audio: se prefiere el idioma pedido (español por defecto) en películas "Dual"
+const audios = info.streams.filter((s) => s.codec_type === 'audio');
+const LANGS = { spa: ['spa', 'es', 'esp', 'lat', 'es-mx', 'es-419'], eng: ['eng', 'en'] };
+const wanted = LANGS[audioLang] || [audioLang];
+const langOf = (s) => (s.tags?.language || '').toLowerCase();
+const titleOf = (s) => (s.tags?.title || '').toLowerCase();
+let aIndex = audios.findIndex((s) => wanted.includes(langOf(s)) && /latin|lat|méx|mex/.test(titleOf(s)));
+if (aIndex < 0) aIndex = audios.findIndex((s) => wanted.includes(langOf(s)));
+if (aIndex < 0) aIndex = audios.findIndex((s) => s.disposition?.default === 1);
+if (aIndex < 0 && audios.length) aIndex = 0;
+const aStream = aIndex >= 0 ? audios[aIndex] : null;
 if (!vStream) {
   console.error('El archivo no tiene pista de video.');
   process.exit(1);
@@ -93,7 +104,7 @@ const outDir = path.join(outRoot, slug);
 fs.mkdirSync(outDir, { recursive: true });
 
 console.log(`\n🎬 ${path.basename(input)}`);
-console.log(`   Original: ${srcW}x${srcH}, ${Math.floor(duration / 60)} min, audio: ${aStream ? aStream.codec_name + ' ' + (aStream.channels || '?') + 'ch' : 'sin audio'}`);
+console.log(`   Original: ${srcW}x${srcH}, ${Math.floor(duration / 60)} min, audio: ${aStream ? `pista ${aIndex + 1}/${audios.length} [${langOf(aStream) || '?'}${aStream.tags?.title ? ' · ' + aStream.tags.title : ''}] ${aStream.codec_name} ${aStream.channels || '?'}ch` : 'sin audio'}`);
 console.log(`   Calidades: ${renditions.map(([h]) => h + 'p').join(', ')}  (${fast ? 'modo rápido' : 'preset slow, máxima calidad'})`);
 console.log(`   Salida: ${outDir}\n`);
 
@@ -110,7 +121,7 @@ renditions.forEach(([h, maxrate, crf], i) => {
     `-profile:v:${i}`, 'high');
 });
 if (aStream) {
-  renditions.forEach(() => ff.push('-map', '0:a:0'));
+  renditions.forEach(() => ff.push('-map', `0:a:${aIndex}`));
   ff.push('-c:a', 'aac', '-b:a', '192k', '-ac', '2', '-ar', '48000');
 }
 ff.push(

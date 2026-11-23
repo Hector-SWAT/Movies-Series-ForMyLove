@@ -115,6 +115,8 @@ node tools/convertir.mjs "D:\Peliculas\Titanic (1997).mkv" titanic
 - Tiempo aproximado: en preset `slow`, una película de 2 h tarda de 1 a 3 h según tu PC. Para pruebas usa `--rapido` (mucho más rápido, con archivos un poco más grandes).
 - Opciones: `--crf 16` (más calidad, más peso) o `--salida E:\hls` (otra carpeta).
 
+**Convertir todas las de una carpeta:** copia `tools\convertir.mjs`, `tools\convertir-todas.mjs` y `tools\CONVERTIR_TODAS.bat` a una subcarpeta `_conversor` dentro de tu carpeta de películas (p. ej. `C:\PELICULAS\_conversor`) y da doble clic en `CONVERTIR_TODAS.bat`. Instala Node/FFmpeg si faltan, convierte todo a `C:\PELICULAS\salida`, salta las ya convertidas y genera `SUBIR_A_R2.bat` y `CATALOGO.txt`. Por defecto elige la pista de audio en español (`--audio eng` para inglés).
+
 **Series:** convierte cada episodio con su propio slug, por ejemplo `friends-t1e01`, `friends-t1e02`…
 
 ## Paso 7 — Subir la película a R2
