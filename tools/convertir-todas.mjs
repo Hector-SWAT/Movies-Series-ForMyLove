@@ -12,11 +12,13 @@ import { fileURLToPath } from 'node:url';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const args = process.argv.slice(2);
 const passthrough = [];
+const solo = []; // --solo "texto": convierte solo los archivos cuyo nombre contenga ese texto
 for (let i = 0; i < args.length; i++) {
+  if (args[i] === '--solo') { solo.push(args[++i].toLowerCase()); args[i] = '--x'; continue; }
   if (args[i] === '--rapido') passthrough.push('--rapido');
   else if (args[i] === '--audio' || args[i] === '--crf' || args[i] === '--gpu') passthrough.push(args[i], args[++i]);
 }
-const folder = path.resolve(args.find((a) => !a.startsWith('--') && !passthrough.includes(a)) || path.join(here, '..'));
+const folder = path.resolve(args.find((a, i) => !a.startsWith('--') && !passthrough.includes(a)) || path.join(here, '..'));
 const outRoot = path.join(folder, 'salida');
 const EXT = /\.(mkv|mp4|avi|mov|m4v|webm|ts|wmv)$/i;
 
@@ -26,7 +28,8 @@ function parse(file) {
   const year = (base.match(/\((19|20)\d{2}\)|\b(19|20)\d{2}\b/) || [''])[0].replace(/[()]/g, '') || null;
   let name = base
     .replace(/\((19|20)\d{2}\)/g, '')
-    .replace(/\b(dual|latino|lat|castellano|subtitulado|sub|esp|eng|1080p|720p|2160p|4k|uhd|hdr|x264|x265|hevc|bluray|brrip|webrip|web-dl|hdrip)\b/gi, '')
+    .replace(/\b(19|20)\d{2}\b/g, '')
+    .replace(/\b(imax|dual|latino|lat|castellano|subtitulado|sub|esp|eng|1080p|720p|2160p|4k|uhd|hdr|x264|x265|hevc|bluray|brrip|webrip|web-dl|hdrip)\b/gi, '')
     .replace(/\s+-\s+/g, ' ')
     .replace(/\s{2,}/g, ' ')
     .trim();
@@ -34,7 +37,10 @@ function parse(file) {
   return { name, year, slug };
 }
 
-const files = fs.readdirSync(folder).filter((f) => EXT.test(f) && fs.statSync(path.join(folder, f)).isFile()).sort();
+const files = fs.readdirSync(folder)
+  .filter((f) => EXT.test(f) && fs.statSync(path.join(folder, f)).isFile())
+  .filter((f) => !solo.length || solo.some((t) => f.toLowerCase().includes(t)))
+  .sort();
 if (!files.length) {
   console.log(`No encontré videos en ${folder}`);
   process.exit(0);
@@ -59,16 +65,22 @@ for (const [i, it] of items.entries()) {
   else failed.push(it);
 }
 
-// Archivos de ayuda para los siguientes pasos
-for (const it of ok) {
-  try { it.duration = JSON.parse(fs.readFileSync(path.join(outRoot, it.slug, 'info.json'), 'utf8')).duration; } catch {}
+// Archivos de ayuda: incluyen TODAS las películas terminadas en salida\ (no solo las de esta vez)
+const done = [];
+for (const dir of fs.existsSync(outRoot) ? fs.readdirSync(outRoot) : []) {
+  try {
+    if (!fs.existsSync(path.join(outRoot, dir, 'master.m3u8'))) continue;
+    const inf = JSON.parse(fs.readFileSync(path.join(outRoot, dir, 'info.json'), 'utf8'));
+    const p = parse(inf.original || dir);
+    done.push({ slug: dir, name: p.name || dir, year: p.year, duration: inf.duration });
+  } catch {}
 }
 const bat = ['@echo off', 'chcp 65001 >nul', 'echo Subiendo peliculas a Cloudflare R2...', 'cd /d "%~dp0"',
-  ...ok.map((it) => `rclone copy "salida\\${it.slug}" r2:smfml-videos/videos/${it.slug} --progress --transfers 16`),
+  ...done.map((it) => `rclone copy "salida\\${it.slug}" r2:smfml-videos/videos/${it.slug} --progress --transfers 16`),
   'echo.', 'echo Listo. Ahora dalas de alta en el Panel (ver CATALOGO.txt).', 'pause'].join('\r\n');
 fs.writeFileSync(path.join(folder, 'SUBIR_A_R2.bat'), bat);
 
-const cat = ok.map((it) => [
+const cat = done.map((it) => [
   `Nombre:        ${it.name}`,
   `Slug:          ${it.slug}`,
   `Año:           ${it.year || ''}`,
