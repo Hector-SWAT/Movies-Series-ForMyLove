@@ -117,6 +117,8 @@ node tools/convertir.mjs "D:\Peliculas\Titanic (1997).mkv" titanic
 
 **Convertir todas las de una carpeta:** copia `tools\convertir.mjs`, `tools\convertir-todas.mjs` y `tools\CONVERTIR_TODAS.bat` a una subcarpeta `_conversor` dentro de tu carpeta de películas (p. ej. `C:\PELICULAS\_conversor`) y da doble clic en `CONVERTIR_TODAS.bat`. Instala Node/FFmpeg si faltan, convierte todo a `C:\PELICULAS\salida`, salta las ya convertidas y genera `SUBIR_A_R2.bat` y `CATALOGO.txt`. Por defecto elige la pista de audio en español (`--audio eng` para inglés).
 
+**Series o cualquier carpeta:** arrastra la carpeta de la temporada encima de `C:\PELICULAS\_conversor\CONVERTIR_CARPETA.bat`. Reconoce nombres como `Serie (2021) - S01E03 - Título.mkv`, crea slugs `serie-t1e03` en `C:\PELICULAS\salida` y anota en `CATALOGO.txt` la serie y la tabla de episodios (temporada, número, título, carpeta y duración) para el Panel.
+
 **Series:** convierte cada episodio con su propio slug, por ejemplo `friends-t1e01`, `friends-t1e02`…
 
 ## Paso 7 — Subir la película a R2
