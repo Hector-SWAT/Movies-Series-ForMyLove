@@ -40,6 +40,24 @@ function isCrossSite(request) {
   return site === 'cross-site';
 }
 
+// Sitios donde vive el frontend (p. ej. tu dominio de Vercel). Se configuran en wrangler.toml → ALLOWED_ORIGINS
+function allowedOrigins(env, url) {
+  return new Set([url.origin, ...String(env.ALLOWED_ORIGINS || '').split(',').map((s) => s.trim().replace(/\/+$/, '')).filter(Boolean)]);
+}
+
+// ¿La petición de video viene de tu página? Revisa Origin (hls.js) o Referer (Safari/iPhone).
+function mediaOriginOk(request, env, url) {
+  const allowed = allowedOrigins(env, url);
+  const origin = request.headers.get('origin');
+  if (origin) return allowed.has(origin) ? origin : false;
+  const ref = request.headers.get('referer');
+  if (ref) {
+    try { return allowed.has(new URL(ref).origin) ? true : false; } catch { return false; }
+  }
+  // Sin Origin ni Referer: solo se permite si el navegador indica que no es de otro sitio
+  return isCrossSite(request) ? false : true;
+}
+
 // ---------------------------------------------------------------- API
 async function handleApi(request, env, url) {
   const path = url.pathname.replace(/^\/api/, '');
@@ -114,7 +132,8 @@ async function handleApi(request, env, url) {
     const token = await makeToken(secret(env), { t: 'media', p: prefix, uid: user.id, exp });
     // El token va DENTRO de la ruta: así las rutas relativas de los .m3u8 lo heredan solas.
     return json({
-      src: `/media/${token}/${prefix}/master.m3u8`,
+      // URL absoluta del Worker: el video va directo de Cloudflare al navegador (no pasa por Vercel)
+      src: `${url.origin}/media/${token}/${prefix}/master.m3u8`,
       video: { id: v.id, name: v.name, season: v.season, episode: v.episode, title_id: v.title_id, title_name: v.title_name, kind: v.kind },
       resume_at: v.position || 0,
     });
@@ -212,8 +231,22 @@ const TYPES = {
 };
 
 async function handleMedia(request, env, url) {
+  const originCheck = mediaOriginOk(request, env, url);
+  const cors = {};
+  if (typeof originCheck === 'string') {
+    cors['access-control-allow-origin'] = originCheck;
+    cors['access-control-expose-headers'] = 'content-length, content-range, accept-ranges';
+    cors['vary'] = 'Origin';
+  }
+  if (request.method === 'OPTIONS') {
+    if (!originCheck) return new Response(null, { status: 403 });
+    return new Response(null, {
+      status: 204,
+      headers: { ...cors, 'access-control-allow-methods': 'GET, HEAD', 'access-control-allow-headers': 'range', 'access-control-max-age': '86400' },
+    });
+  }
   if (!['GET', 'HEAD'].includes(request.method)) return new Response('Método no permitido', { status: 405 });
-  if (isCrossSite(request)) return new Response('Prohibido', { status: 403 });
+  if (!originCheck) return new Response('Prohibido', { status: 403 });
 
   // /media/poster/<key>  -> pósters (solo requiere sesión)
   // /media/<token>/<key> -> video (requiere sesión + URL firmada vigente para esa carpeta)
@@ -224,24 +257,25 @@ async function handleMedia(request, env, url) {
   const key = decodeURIComponent(rest.slice(slash + 1));
   if (key.includes('..')) return new Response('Ruta inválida', { status: 400 });
 
-  const user = await currentUser(request, env);
-  if (!user) return new Response('Inicia sesión', { status: 401 });
-
   if (first === 'poster') {
-    if (!/\.(jpe?g|png|webp)$/i.test(key)) return new Response('Prohibido', { status: 403 });
+    // Pósters: requieren la cookie de sesión (en Vercel llegan por el proxy de vercel.json)
+    const user = await currentUser(request, env);
+    if (!user) return new Response('Inicia sesión', { status: 401, headers: cors });
+    if (!/\.(jpe?g|png|webp)$/i.test(key)) return new Response('Prohibido', { status: 403, headers: cors });
   } else {
+    // Video: la URL firmada (por usuario, carpeta y con caducidad) es la autorización
     const t = await readToken(secret(env), first);
-    if (!t || t.t !== 'media' || t.uid !== user.id || !key.startsWith(t.p + '/')) {
-      return new Response('URL expirada o inválida', { status: 403 });
+    if (!t || t.t !== 'media' || !key.startsWith(t.p + '/')) {
+      return new Response('URL expirada o inválida', { status: 403, headers: cors });
     }
   }
 
   const obj = request.method === 'HEAD'
     ? await env.BUCKET.head(key)
     : await env.BUCKET.get(key, { range: request.headers, onlyIf: request.headers });
-  if (!obj) return new Response('No encontrado', { status: 404 });
+  if (!obj) return new Response('No encontrado', { status: 404, headers: cors });
 
-  const headers = new Headers();
+  const headers = new Headers(cors);
   obj.writeHttpMetadata(headers);
   headers.set('etag', obj.httpEtag);
   headers.set('accept-ranges', 'bytes');

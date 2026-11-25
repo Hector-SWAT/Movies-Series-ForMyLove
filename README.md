@@ -146,6 +146,21 @@ Entra a tu sitio, inicia sesión como administrador y abre **Panel**:
 
 ¡Listo! Ya se puede ver desde cualquier navegador: PC, celular, iPhone/Safari o Smart TV con navegador.
 
+## Paso 8.5 — Página en Vercel (https://moviesandseriesformylove.vercel.app)
+
+El frontend se publica en **Vercel** y Cloudflare queda como backend:
+
+```
+Navegador ──► moviesandseriesformylove.vercel.app   (página React)
+   │            ├─ /api/*           ─proxy (vercel.json)─► Worker de Cloudflare ─► D1
+   │            └─ /media/poster/*  ─proxy (vercel.json)─► Worker ─► R2
+   └──────────► Video HLS directo del Worker (URL firmada) ─► R2   (no gasta datos de Vercel)
+```
+
+- `vercel.json` redirige `/api` y los pósters a `https://series-and-movies-for-my-love.formylovealeshito.workers.dev`. Si cambias el subdominio del Worker, cámbialo ahí.
+- `ALLOWED_ORIGINS` en `wrangler.toml` indica qué páginas pueden reproducir los videos. Agrega otros dominios separados por coma y vuelve a ejecutar `npm run deploy`.
+- Vercel vuelve a publicar solo cada vez que haces `git push`. El Worker se actualiza con `npm run deploy`.
+
 ## Paso 9 — (Opcional) Usar tu dominio de Namecheap
 
 1. En Cloudflare, ve a **Add a site**, escribe tu dominio y elige el plan Free.
