@@ -34,7 +34,7 @@ export default function Navbar() {
     <header className={`nav ${scrolled ? 'nav--solid' : ''}`}>
       <Link to="/" className="brand" onClick={() => setQ('')}>
         <span className="brand__heart">❤</span>
-        <span className="brand__text">Series and Movies <em>for My Love</em></span>
+        <span className="brand__text">Series &amp; Movies <em>For My Love Aleshito</em></span>
       </Link>
       <div className="nav__right">
         <input className="search" type="search" placeholder="Buscar…" value={q} onChange={(e) => setQ(e.target.value)} />

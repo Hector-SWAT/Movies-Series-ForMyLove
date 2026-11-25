@@ -27,7 +27,7 @@ export default function Login() {
       <div className="login__glow" />
       <form className="login__box" onSubmit={submit}>
         <div className="login__heart">❤</div>
-        <h1 className="login__title">Series and Movies<br /><em>for My Love</em></h1>
+        <h1 className="login__title">Series &amp; Movies<br /><em>For My Love Aleshito</em></h1>
         <p className="login__sub">Nuestro cine privado</p>
         <input placeholder="Usuario" autoComplete="username" value={username} onChange={(e) => setUsername(e.target.value)} required />
         <input placeholder="Contraseña" type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} required />

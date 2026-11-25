@@ -1,4 +1,4 @@
-# ❤ Series and Movies for My Love
+# ❤ Series & Movies For My Love Aleshito
 
 Plataforma privada de streaming: películas y series en HLS adaptativo (1080p/720p/480p, hasta 4K), con login, catálogo, búsqueda, "seguir viendo", episodios por temporada y panel de administración.
 
@@ -160,6 +160,29 @@ Navegador ──► moviesandseriesformylove.vercel.app   (página React)
 - `vercel.json` redirige `/api` y los pósters a `https://series-and-movies-for-my-love.formylovealeshito.workers.dev`. Si cambias el subdominio del Worker, cámbialo ahí.
 - `ALLOWED_ORIGINS` en `wrangler.toml` indica qué páginas pueden reproducir los videos. Agrega otros dominios separados por coma y vuelve a ejecutar `npm run deploy`.
 - Vercel vuelve a publicar solo cada vez que haces `git push`. El Worker se actualiza con `npm run deploy`.
+
+## Paso 8.6 — Películas en OTRAS cuentas de Cloudflare
+
+La plataforma puede leer videos de varias cuentas. La cuenta **principal** es la del Worker, y cada cuenta extra se registra con un nombre (`cuenta2`, `cuenta3`…).
+
+Por cada cuenta nueva:
+
+1. En esa cuenta, crea un bucket R2 (Standard, privado) y **dos** API tokens:
+   - **Object Read & Write**, para que rclone suba las películas.
+   - **Object Read only**, para que el Worker las lea.
+2. Configura rclone y sube la película:
+   ```powershell
+   rclone config create r2cuenta2 s3 provider=Cloudflare access_key_id=KEY_RW secret_access_key=SECRET_RW endpoint=https://ACCOUNT_ID.r2.cloudflarestorage.com acl=private
+   rclone copy "C:\PELICULAS\salida\<slug>" r2cuenta2:BUCKET/videos/<slug> --progress --transfers 16
+   ```
+3. Registra la cuenta en el Worker, una sola vez:
+   ```powershell
+   npx wrangler secret put R2_CUENTA2
+   ```
+   Pega `ACCOUNT_ID|BUCKET|KEY_SOLO_LECTURA|SECRET_SOLO_LECTURA` (separado por `|`, sin espacios).
+4. En el Panel, elige **Cuenta de almacenamiento → cuenta2** al dar de alta la película.
+
+> Si tu base de datos se creó antes de esta función, ejecuta **una vez** `npm run db:migrar`.
 
 ## Paso 9 — (Opcional) Usar tu dominio de Namecheap
 

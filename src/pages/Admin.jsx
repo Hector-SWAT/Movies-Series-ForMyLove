@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api.js';
 
-const emptyTitle = { kind: 'movie', slug: '', name: '', year: '', genre: '', description: '', poster_key: '', hls_prefix: '', duration: '' };
-const emptyEp = { title_id: '', season: 1, episode: 1, name: '', hls_prefix: '', duration: '' };
+const emptyTitle = { kind: 'movie', slug: '', name: '', year: '', genre: '', description: '', poster_key: '', hls_prefix: '', duration: '', storage: '' };
+const emptyEp = { title_id: '', season: 1, episode: 1, name: '', hls_prefix: '', duration: '', storage: '' };
+const storageHelp = 'Cuenta de Cloudflare donde subiste esta película. Las cuentas extra se agregan con: npx wrangler secret put R2_CUENTA2';
 
 function Field({ label, children }) {
   return <label className="field"><span>{label}</span>{children}</label>;
@@ -14,9 +15,16 @@ export default function Admin() {
   const [ep, setEp] = useState(emptyEp);
   const [u, setU] = useState({ username: '', password: '', display_name: '', is_admin: false });
   const [msg, setMsg] = useState('');
+  const [storages, setStorages] = useState(['principal']);
 
   const reload = () => api.titles().then(setTitles);
-  useEffect(() => { reload(); }, []);
+  useEffect(() => { reload(); api.storages().then(setStorages).catch(() => {}); }, []);
+
+  const StorageSelect = ({ value, onChange }) => (
+    <select value={value || 'principal'} onChange={(e) => onChange(e.target.value === 'principal' ? '' : e.target.value)} title={storageHelp}>
+      {storages.map((s) => <option key={s} value={s}>{s === 'principal' ? 'Principal (esta cuenta)' : s}</option>)}
+    </select>
+  );
 
   const flash = (m) => { setMsg(m); setTimeout(() => setMsg(''), 4000); };
   const num = (v) => (v === '' || v == null ? null : Number(v));
@@ -41,7 +49,7 @@ export default function Admin() {
     e.preventDefault();
     try {
       await api.createVideo({ ...ep, title_id: Number(ep.title_id), season: num(ep.season), episode: num(ep.episode), duration: num(ep.duration) });
-      setEp({ ...ep, episode: Number(ep.episode) + 1, name: '', hls_prefix: '', duration: '' });
+      setEp({ ...ep, episode: Number(ep.episode) + 1, name: '', hls_prefix: '', duration: '' }); // conserva la cuenta
       flash('✅ Episodio agregado');
     } catch (err) { flash('❌ ' + err.message); }
   };
@@ -84,6 +92,7 @@ export default function Admin() {
             <Field label="Género"><input value={t.genre} onChange={(e) => setT({ ...t, genre: e.target.value })} placeholder="Romance" /></Field>
           </div>
           <Field label="Descripción"><textarea rows={3} value={t.description} onChange={(e) => setT({ ...t, description: e.target.value })} /></Field>
+          <Field label="Cuenta de almacenamiento (R2)"><StorageSelect value={t.storage} onChange={(v) => setT({ ...t, storage: v })} /></Field>
           <Field label="Póster en R2"><input value={t.poster_key} onChange={(e) => setT({ ...t, poster_key: e.target.value })} placeholder="videos/titanic/poster.jpg" /></Field>
           {t.kind === 'movie' && (
             <div className="field-row">
@@ -107,6 +116,7 @@ export default function Admin() {
             <Field label="Episodio"><input type="number" min="1" value={ep.episode} onChange={(e) => setEp({ ...ep, episode: e.target.value })} /></Field>
           </div>
           <Field label="Nombre del episodio"><input value={ep.name} onChange={(e) => setEp({ ...ep, name: e.target.value })} /></Field>
+          <Field label="Cuenta de almacenamiento (R2)"><StorageSelect value={ep.storage} onChange={(v) => setEp({ ...ep, storage: v })} /></Field>
           <div className="field-row">
             <Field label="Carpeta HLS en R2"><input value={ep.hls_prefix} onChange={(e) => setEp({ ...ep, hls_prefix: e.target.value })} placeholder="videos/friends-t1e01" required /></Field>
             <Field label="Duración (seg)"><input type="number" value={ep.duration} onChange={(e) => setEp({ ...ep, duration: e.target.value })} /></Field>
@@ -127,13 +137,14 @@ export default function Admin() {
       <section className="panel mt">
         <h2>Catálogo ({titles.length})</h2>
         <table className="table">
-          <thead><tr><th>Nombre</th><th>Tipo</th><th>Slug</th><th /></tr></thead>
+          <thead><tr><th>Nombre</th><th>Tipo</th><th>Slug</th><th>Cuenta</th><th /></tr></thead>
           <tbody>
             {titles.map((x) => (
               <tr key={x.id}>
                 <td>{x.name}</td>
                 <td>{x.kind === 'series' ? 'Serie' : 'Película'}</td>
                 <td><code>{x.slug}</code></td>
+                <td>{x.storage || 'principal'}</td>
                 <td><button className="link-danger" onClick={() => del(x.id, x.name)}>Quitar</button></td>
               </tr>
             ))}

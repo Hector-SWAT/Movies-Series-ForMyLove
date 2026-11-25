@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS titles (
   genre       TEXT,
   description TEXT,
   poster_key  TEXT,          -- ruta en R2, p. ej. videos/titanic/poster.jpg
+  storage     TEXT,          -- NULL = bucket principal; "cuenta2" = bucket de otra cuenta
   created_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -28,7 +29,8 @@ CREATE TABLE IF NOT EXISTS videos (
   episode    INTEGER,
   name       TEXT,
   hls_prefix TEXT NOT NULL,  -- carpeta en R2, p. ej. videos/titanic
-  duration   INTEGER         -- segundos
+  duration   INTEGER,        -- segundos
+  storage    TEXT            -- NULL = bucket principal; "cuenta2" = bucket de otra cuenta
 );
 CREATE INDEX IF NOT EXISTS idx_videos_title ON videos(title_id);
 

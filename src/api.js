@@ -27,6 +27,7 @@ export const api = {
   createTitle: (data) => request('/admin/titles', { method: 'POST', body: data }),
   createVideo: (data) => request('/admin/videos', { method: 'POST', body: data }),
   deleteTitle: (id) => request(`/admin/titles/${id}`, { method: 'DELETE' }),
+  storages: () => request('/admin/storages'),
   createUser: (data) => request('/admin/users', { method: 'POST', body: data }),
 };
 

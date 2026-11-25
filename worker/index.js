@@ -1,6 +1,7 @@
-// Series and Movies for My Love — Worker principal
+// Series & Movies For My Love Aleshito — Worker principal
 // Sirve: API (/api/*), video protegido desde R2 (/media/*) y el frontend (dist/).
 import { makeToken, readToken, hashPassword, checkPassword } from './crypto.js';
+import { AwsClient } from 'aws4fetch';
 
 const COOKIE = 'smfml_session';
 
@@ -95,7 +96,7 @@ async function handleApi(request, env, url) {
   // Catálogo (con búsqueda opcional ?q=)
   if (path === '/titles' && method === 'GET') {
     const q = (url.searchParams.get('q') || '').trim();
-    const sql = `SELECT id, slug, name, kind, year, genre, description, poster_key FROM titles
+    const sql = `SELECT id, slug, name, kind, year, genre, description, poster_key, storage FROM titles
                  ${q ? 'WHERE name LIKE ?1 OR genre LIKE ?1 OR description LIKE ?1' : ''}
                  ORDER BY created_at DESC`;
     const stmt = q ? env.DB.prepare(sql).bind(`%${q}%`) : env.DB.prepare(sql);
@@ -129,7 +130,7 @@ async function handleApi(request, env, url) {
     if (!v) return err(404, 'Video no encontrado');
     const prefix = v.hls_prefix.replace(/\/+$/, '');
     const exp = Math.floor(Date.now() / 1000) + Number(env.MEDIA_TOKEN_HOURS || 6) * 3600;
-    const token = await makeToken(secret(env), { t: 'media', p: prefix, uid: user.id, exp });
+    const token = await makeToken(secret(env), { t: 'media', p: prefix, s: v.storage || null, uid: user.id, exp });
     // El token va DENTRO de la ruta: así las rutas relativas de los .m3u8 lo heredan solas.
     return json({
       // URL absoluta del Worker: el video va directo de Cloudflare al navegador (no pasa por Vercel)
@@ -166,18 +167,29 @@ async function handleApi(request, env, url) {
   if (path.startsWith('/admin/')) {
     if (!user.is_admin) return err(403, 'Solo administradores');
 
+    // Cuentas de almacenamiento configuradas (secretos R2_<NOMBRE>)
+    if (path === '/admin/storages' && method === 'GET') {
+      const extra = Object.keys(env)
+        .filter((k) => /^R2_[A-Z0-9_]+$/.test(k) && k !== 'R2_S3_BASE_OVERRIDE')
+        .map((k) => k.slice(3).toLowerCase())
+        .sort();
+      return json(['principal', ...extra]);
+    }
+
     if (path === '/admin/titles' && method === 'POST') {
       const b = await request.json().catch(() => ({}));
       if (!b.slug || !b.name || !['movie', 'series'].includes(b.kind)) return err(400, 'slug, name y kind (movie|series) son obligatorios');
       const slug = String(b.slug).trim().toLowerCase();
+      const storage = cleanStorage(b.storage);
+      if (storage === false) return err(400, 'Nombre de cuenta inválido (solo letras, números y _)');
       const r = await env.DB.prepare(
-        'INSERT INTO titles (slug, name, kind, year, genre, description, poster_key) VALUES (?, ?, ?, ?, ?, ?, ?)',
-      ).bind(slug, b.name, b.kind, b.year || null, b.genre || null, b.description || null, b.poster_key || null).run();
+        'INSERT INTO titles (slug, name, kind, year, genre, description, poster_key, storage) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      ).bind(slug, b.name, b.kind, b.year || null, b.genre || null, b.description || null, b.poster_key || null, storage).run();
       const titleId = r.meta.last_row_id;
       // Atajo: para una película se crea su video de una vez
       if (b.kind === 'movie' && b.hls_prefix) {
-        await env.DB.prepare('INSERT INTO videos (title_id, hls_prefix, name, duration) VALUES (?, ?, ?, ?)')
-          .bind(titleId, b.hls_prefix, b.name, b.duration || null).run();
+        await env.DB.prepare('INSERT INTO videos (title_id, hls_prefix, name, duration, storage) VALUES (?, ?, ?, ?, ?)')
+          .bind(titleId, b.hls_prefix, b.name, b.duration || null, storage).run();
       }
       return json({ id: titleId }, 201);
     }
@@ -185,8 +197,10 @@ async function handleApi(request, env, url) {
     if (path === '/admin/videos' && method === 'POST') {
       const b = await request.json().catch(() => ({}));
       if (!b.title_id || !b.hls_prefix) return err(400, 'title_id y hls_prefix son obligatorios');
-      const r = await env.DB.prepare('INSERT INTO videos (title_id, season, episode, name, hls_prefix, duration) VALUES (?, ?, ?, ?, ?, ?)')
-        .bind(b.title_id, b.season || null, b.episode || null, b.name || null, b.hls_prefix, b.duration || null).run();
+      const storage = cleanStorage(b.storage);
+      if (storage === false) return err(400, 'Nombre de cuenta inválido (solo letras, números y _)');
+      const r = await env.DB.prepare('INSERT INTO videos (title_id, season, episode, name, hls_prefix, duration, storage) VALUES (?, ?, ?, ?, ?, ?, ?)')
+        .bind(b.title_id, b.season || null, b.episode || null, b.name || null, b.hls_prefix, b.duration || null, storage).run();
       return json({ id: r.meta.last_row_id }, 201);
     }
 
@@ -215,6 +229,78 @@ async function handleApi(request, env, url) {
   }
 
   return err(404, 'Ruta no encontrada');
+}
+
+// ---------------------------------------------------------------- ALMACENAMIENTO
+// "" / null = bucket principal (binding BUCKET). Otro nombre (p. ej. "cuenta2") = bucket de OTRA cuenta
+// de Cloudflare, leído por la API S3 con el secreto R2_CUENTA2 = "ACCOUNT_ID|BUCKET|ACCESS_KEY_ID|SECRET_ACCESS_KEY"
+function cleanStorage(v) {
+  if (v == null || String(v).trim() === '' || String(v).trim().toLowerCase() === 'principal') return null;
+  const s = String(v).trim().toLowerCase();
+  return /^[a-z0-9_]{1,32}$/.test(s) ? s : false;
+}
+
+const s3Clients = new Map();
+function remoteStorage(env, name) {
+  const raw = env[`R2_${name.toUpperCase()}`];
+  if (!raw) throw new Error(`Falta el secreto R2_${name.toUpperCase()} (npx wrangler secret put R2_${name.toUpperCase()})`);
+  if (!s3Clients.has(raw)) {
+    const [accountId, bucket, accessKeyId, secretAccessKey] = raw.split('|').map((x) => x.trim());
+    if (!accountId || !bucket || !accessKeyId || !secretAccessKey) {
+      throw new Error(`R2_${name.toUpperCase()} debe tener el formato ACCOUNT_ID|BUCKET|ACCESS_KEY_ID|SECRET_ACCESS_KEY`);
+    }
+    s3Clients.set(raw, {
+      base: env.R2_S3_BASE_OVERRIDE ? `${env.R2_S3_BASE_OVERRIDE}/${bucket}` : `https://${accountId}.r2.cloudflarestorage.com/${bucket}`,
+      client: new AwsClient({ accessKeyId, secretAccessKey, service: 's3', region: 'auto' }),
+    });
+  }
+  return s3Clients.get(raw);
+}
+
+// Lee un objeto del bucket que corresponda. Devuelve { status, headers, body } listo para responder.
+async function readObject(env, storage, key, request) {
+  if (!storage) {
+    const obj = request.method === 'HEAD'
+      ? await env.BUCKET.head(key)
+      : await env.BUCKET.get(key, { range: request.headers, onlyIf: request.headers });
+    if (!obj) return null;
+    const headers = new Headers();
+    obj.writeHttpMetadata(headers);
+    headers.set('etag', obj.httpEtag);
+    if (!('body' in obj) || obj.body === undefined) {
+      headers.set('content-length', String(obj.size));
+      return { status: request.method === 'HEAD' ? 200 : 304, headers, body: null };
+    }
+    if (obj.range && request.headers.has('range')) {
+      const { offset = 0, length = obj.size - offset } = obj.range;
+      headers.set('content-range', `bytes ${offset}-${offset + length - 1}/${obj.size}`);
+      headers.set('content-length', String(length));
+      return { status: 206, headers, body: obj.body };
+    }
+    headers.set('content-length', String(obj.size));
+    return { status: 200, headers, body: obj.body };
+  }
+
+  // Bucket de otra cuenta (API S3 de R2)
+  const { base, client } = remoteStorage(env, storage);
+  const fwd = {};
+  for (const h of ['range', 'if-none-match', 'if-modified-since']) {
+    const v = request.headers.get(h);
+    if (v) fwd[h] = v;
+  }
+  const path = key.split('/').map(encodeURIComponent).join('/');
+  const res = await client.fetch(`${base}/${path}`, { method: request.method, headers: fwd });
+  if (res.status === 404) return null;
+  if (![200, 206, 304].includes(res.status)) {
+    const detail = await res.text().catch(() => '');
+    throw new Error(`Bucket "${storage}" respondió ${res.status}: ${detail.slice(0, 200)}`);
+  }
+  const headers = new Headers();
+  for (const h of ['content-type', 'content-length', 'content-range', 'etag', 'last-modified']) {
+    const v = res.headers.get(h);
+    if (v) headers.set(h, v);
+  }
+  return { status: res.status, headers, body: request.method === 'HEAD' ? null : res.body };
 }
 
 // ---------------------------------------------------------------- MEDIA (R2)
@@ -257,49 +343,34 @@ async function handleMedia(request, env, url) {
   const key = decodeURIComponent(rest.slice(slash + 1));
   if (key.includes('..')) return new Response('Ruta inválida', { status: 400 });
 
+  let storage = null;
   if (first === 'poster') {
     // Pósters: requieren la cookie de sesión (en Vercel llegan por el proxy de vercel.json)
     const user = await currentUser(request, env);
     if (!user) return new Response('Inicia sesión', { status: 401, headers: cors });
     if (!/\.(jpe?g|png|webp)$/i.test(key)) return new Response('Prohibido', { status: 403, headers: cors });
+    const row = await env.DB.prepare('SELECT storage FROM titles WHERE poster_key = ? LIMIT 1').bind(key).first();
+    storage = row?.storage || null;
   } else {
     // Video: la URL firmada (por usuario, carpeta y con caducidad) es la autorización
     const t = await readToken(secret(env), first);
     if (!t || t.t !== 'media' || !key.startsWith(t.p + '/')) {
       return new Response('URL expirada o inválida', { status: 403, headers: cors });
     }
+    storage = t.s || null;
   }
 
-  const obj = request.method === 'HEAD'
-    ? await env.BUCKET.head(key)
-    : await env.BUCKET.get(key, { range: request.headers, onlyIf: request.headers });
+  const obj = await readObject(env, storage, key, request);
   if (!obj) return new Response('No encontrado', { status: 404, headers: cors });
 
-  const headers = new Headers(cors);
-  obj.writeHttpMetadata(headers);
-  headers.set('etag', obj.httpEtag);
+  const headers = obj.headers;
+  for (const [k, v] of Object.entries(cors)) headers.set(k, v);
   headers.set('accept-ranges', 'bytes');
   const ext = key.split('.').pop().toLowerCase();
   if (TYPES[ext]) headers.set('content-type', TYPES[ext]);
   // Playlists: sin caché; segmentos y pósters: caché privada en el navegador
   headers.set('cache-control', ext === 'm3u8' ? 'private, no-cache' : 'private, max-age=86400');
-
-  if (!('body' in obj) || obj.body === undefined) {
-    // HEAD o condicional "not modified"
-    headers.set('content-length', String(obj.size));
-    return new Response(null, { status: request.method === 'HEAD' ? 200 : 304, headers });
-  }
-
-  let status = 200;
-  if (obj.range && request.headers.has('range')) {
-    const { offset = 0, length = obj.size - offset } = obj.range;
-    headers.set('content-range', `bytes ${offset}-${offset + length - 1}/${obj.size}`);
-    headers.set('content-length', String(length));
-    status = 206;
-  } else {
-    headers.set('content-length', String(obj.size));
-  }
-  return new Response(obj.body, { status, headers });
+  return new Response(obj.body, { status: obj.status, headers });
 }
 
 // ---------------------------------------------------------------- ENTRADA
